@@ -9,22 +9,20 @@ Gemini 4 Argon と MuJoCo を組み合わせ、自然言語で四足歩行ロボ
 | パート | アプローチ | 内容 |
 | --- | --- | --- |
 | Part 1 | プリセット動作による制御 | OpenCat の歩容や姿勢を Gemini の Function Calling で組み合わせ、前進・旋回・伏せなどを実行します。 |
-| Part 2 | 直接関節制御 | プリセットを使わず、8関節の角度、キーフレーム補間、CPG (中枢パターン生成器) によって新しい姿勢や周期運動を合成します。 |
+| Part 2 | 直接関節制御 | プリセットを使わず、Gemini 4 Argonにより自然言語で、8関節の角度、キーフレーム補間、CPG (中枢パターン生成器) によって新しい姿勢や周期運動を合成します。 |
 | Part 3 | スキルの蓄積と再利用 | 姿勢・キーフレーム列・CPG パラメータを名前付きスキルとして JSON に保存し、次回以降の指示で再利用します。 |
 
-Gemini がツールを呼び出してシミュレーションを進め、レンダリング画像をもとに動作を確認します。実行結果は動画として保存できます。ノートブックには、二足立ちや前足を振る動作、保存済みスキルを組み合わせた二足歩行を試す例も含まれます。
-
-ここでの「学習」は、モデルの再訓練ではなく、生成した動作パラメータを保存・再利用する仕組みを指します。
+Gemini がツールを呼び出してシミュレーションを進め、レンダリング画像をもとに動作を確認します。実行結果は動画として保存できます。ノートブックには、二足立ちや前足を振る動作、保存済みスキルを組み合わせた二足歩行を試す例も含まれます。ここでの「スキル保存」は、生成した動作パラメータを保存・再利用する仕組みを指します。
 
 ## ファイル構成
 
 - [bittle_gemini_walkthrough.ipynb](./bittle_gemini_walkthrough.ipynb): 共通セットアップ、各方式の実装解説、実行例と結果の表示。
 - [src/bittle_gemini_control.py](./src/bittle_gemini_control.py): プリセット動作を利用する制御スクリプト。
-- [src/bittle_gemini_direct.py](./src/bittle_gemini_direct.py): プリセットを利用しない直接関節制御スクリプト。
+- [src/bittle_gemini_direct.py](./src/bittle_gemini_direct.py): プリセットを利用しない自然言語による直接関節制御スクリプト。
 - [src/bittle_gemini_skills.py](./src/bittle_gemini_skills.py): スキルの保存・読み込み・再利用を行うスクリプト。
 - [videos/](./videos/): 生成したシミュレーション動画の保存先。
 
-スキル保存用の `learned_skills.json` は動画とは別に管理します。ノートブックのスキル学習例では、別の `notebook_learned_skills.json` を使用します。
+スキル保存用の `learned_skills.json` は動画とは別に管理します。ノートブックのスキル保存例では、別の `notebook_learned_skills.json` を使用します。
 
 ### 実行結果のサンプル
 
