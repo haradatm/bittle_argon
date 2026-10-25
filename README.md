@@ -28,9 +28,9 @@ Gemini がツールを呼び出してシミュレーションを進め、レン�
 
 ### 実行結果のサンプル
 
-| プリセット方式での二足立ちの試行 (失敗) | 保存済みスキルによる二足立ちと前足を振る動作の試行 (成功) | 保存済みスキルを利用した二足歩行の試行 (成功)|
-| --- | --- | --- |
-| ![プリセット方式での二足立ちの試行](./assets/notebook_part1_preset_biped.gif) | ![保存済みスキルによる二足立ちと前足を振る動作の試行](./assets/notebook_part3_skill_reuse_biped.gif) | ![保存済みスキルを利用した二足歩行の試行](./assets/notebook_part3_skill_reuse_biped_walk.gif) |
+| プリセット方式での二足立ち ❌ | 保存済みスキルによる二足立ちと前足を振る動作 🟢 | 保存済みスキルを利用した二足歩行 🟢 |
+| :---: | :---: | :---: |
+| ![プリセット方式での二足立ち](./assets/notebook_part1_preset_biped.gif) | ![保存済みスキルによる二足立ちと前足を振る動作](./assets/notebook_part3_skill_reuse_biped.gif) | ![保存済みスキルを利用した二足歩行](./assets/notebook_part3_skill_reuse_biped_walk.gif) |
 
 ## 実行準備
 

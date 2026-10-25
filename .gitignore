@@ -4,5 +4,6 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-bittle-mujoco
+videos/
+bittle-mujoco/
 notebook_learned_skills.json
