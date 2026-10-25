@@ -1,21 +1,20 @@
-"""Petoi Bittle X — Zero-Preset Direct Joint Control + Autonomous Skill Learning via Gemini 4 Argon.
+"""Petoi Bittle X — Zero-Preset Direct Joint Control via Gemini 4 Argon.
 
-This script extends `bittle_gemini_direct.py` with a persistent JSON-backed
-Skill Library (`learned_skills.json`) so Gemini 4 Argon can save newly discovered
-postures, keyframe sequences, and CPG gaits and reuse them in 1 shot on future runs.
+This script DOES NOT import or load `gaits.py` or any preset gait/pose tables.
+Gemini 4 Argon controls the 8 servo actuators directly from first principles
+(kinematics, physics feedback, and multi-view camera rendering) by synthesizing
+joint angle trajectories and cyclical CPG (Central Pattern Generator) parameters.
 """
 
 from __future__ import annotations
 
 import argparse
 import io
-import json
 import math
 import subprocess
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 import imageio.v2 as imageio
 import imageio_ffmpeg
@@ -26,7 +25,7 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 XML_PATH = ROOT_DIR / "bittle-mujoco" / "bittle.xml"
 
 # Symmetric intuitive degree interface -> MuJoCo actuator radian conversion:
@@ -329,22 +328,6 @@ class DirectBittleSandbox:
     ) -> dict:
         """Synthesize and run a continuous sinusoidal CPG (Central Pattern Generator) trajectory."""
         before = self.get_state()
-        # Smoothly align to neutral standing posture if starting from a non-standing pose (e.g. sit/lie_down)
-        if np.linalg.norm(self.current_ctrl - self.stand_ctrl) > 0.15:
-            pre_start = self.current_ctrl.copy()
-            target_stand = symmetric_deg_to_mjcf_ctrl(
-                shoulder_offset_deg, knee_offset_deg,
-                shoulder_offset_deg, knee_offset_deg,
-                shoulder_offset_deg, knee_offset_deg,
-                shoulder_offset_deg, knee_offset_deg,
-                stand_ctrl=self.stand_ctrl,
-            )
-            def align_ctrl(t: float) -> np.ndarray:
-                alpha = min(1.0, t / 0.35)
-                smooth = 0.5 * (1.0 - math.cos(math.pi * alpha))
-                return pre_start + (target_stand - pre_start) * smooth
-            self._step_sim(0.45, ctrl_fn=align_ctrl)
-
         cycles = max(1, int(cycles))
         cycle_period_s = max(0.2, float(cycle_period_s))
         total_time = cycles * cycle_period_s
@@ -406,6 +389,7 @@ class DirectBittleSandbox:
         if not self.frames:
             return
         path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix.lower() == ".gif":
             imageio.mimsave(str(path), self.frames, fps=self.fps)
             return
@@ -433,95 +417,11 @@ class DirectBittleSandbox:
 
 
 # ---------------------------------------------------------------------------
-# Persistent Skill Library (JSON-backed Self-Learning Store)
+# Low-level Joint Tools for Gemini 4 Argon (NO PRESETS)
 # ---------------------------------------------------------------------------
 
-DEFAULT_SKILLS_PATH = ROOT_DIR / "learned_skills.json"
-
-
-class SkillLibrary:
-    """Manages persistent robot skills learned and synthesized by Gemini."""
-
-    def __init__(self, path: Path = DEFAULT_SKILLS_PATH):
-        self.path = Path(path)
-        self.skills: dict[str, dict[str, Any]] = {}
-        self.load()
-
-    def load(self) -> None:
-        if self.path.exists():
-            try:
-                self.skills = json.loads(self.path.read_text(encoding="utf-8"))
-            except Exception:
-                self.skills = {}
-        else:
-            self.skills = {}
-
-    def save(self) -> None:
-        self.path.write_text(
-            json.dumps(self.skills, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-    def register_pose(
-        self, name: str, description: str, joint_angles: dict[str, float]
-    ) -> dict[str, Any]:
-        entry = {
-            "name": name,
-            "kind": "pose",
-            "description": description,
-            "joint_angles": joint_angles,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        self.skills[name] = entry
-        self.save()
-        return entry
-
-    def register_keyframes(
-        self, name: str, description: str, keyframes: list[dict[str, float]]
-    ) -> dict[str, Any]:
-        entry = {
-            "name": name,
-            "kind": "keyframes",
-            "description": description,
-            "keyframes": keyframes,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        self.skills[name] = entry
-        self.save()
-        return entry
-
-    def register_cpg(
-        self, name: str, description: str, cpg_params: dict[str, float]
-    ) -> dict[str, Any]:
-        entry = {
-            "name": name,
-            "kind": "cpg",
-            "description": description,
-            "cpg_params": cpg_params,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        self.skills[name] = entry
-        self.save()
-        return entry
-
-    def summary_for_prompt(self) -> str:
-        """Compact summary of available learned skills to inject into the prompt."""
-        if not self.skills:
-            return "None yet (Skill library is currently empty)."
-        lines = []
-        for name, info in self.skills.items():
-            lines.append(
-                f"- `{name}` (kind: {info['kind']}): {info['description']}"
-            )
-        return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Low-level Joint Tools + Skill Library Tools for Gemini 4 Argon (NO PRESETS)
-# ---------------------------------------------------------------------------
-
-def build_direct_tools(sandbox: DirectBittleSandbox, skill_lib: SkillLibrary):
-    """Build low-level joint control primitives AND persistent skill library tools."""
+def build_direct_tools(sandbox: DirectBittleSandbox):
+    """Build low-level joint control primitives without any preset gaits or poses."""
 
     def set_joint_angles(
         rf_shoulder_deg: float = 0.0,
@@ -549,9 +449,9 @@ def build_direct_tools(sandbox: DirectBittleSandbox, skill_lib: SkillLibrary):
 
         Examples of physical geometry from first principles:
         - Neutral standing: all shoulders = 0, all knees = 0 (torso z_above_floor ≈ 0.095 m)
-        - Lying flat / prone (伏せ): swing thighs forward (+45 to +65 deg) so the belly lowers to the floor, and tuck knees (+40 to +55 deg)
-        - Sitting (お座り): keep front legs extended/supporting (front shoulders ~ -10 to +10, front knees ~ 0) while folding rear legs (rear shoulders +45 to +60, rear knees +45 to +60) so the rear drops
-        - Lifting one front paw (e.g. RF wave/shake): shift weight slightly to other 3 legs, swing RF shoulder forward (+50 to +75 deg) and lift RF knee (+30 to +60 deg).
+        - Lying flat / prone (伏せ): swing thighs forward (+45 to +60 deg) so the belly lowers to the floor, and tuck or rest knees (+20 to +45 deg, or -30 deg)
+        - Sitting (お座り): keep front legs extended/supporting (front shoulders ~ -10 to +10, front knees ~ 0) while folding rear legs (rear shoulders +40 to +60, rear knees +40 to +60) so the rear drops
+        - Lifting one front paw (e.g. RF wave/shake): shift weight slightly to other 3 legs (e.g. LF/RR/LR), swing RF shoulder forward (+50 to +75 deg) and lift RF knee (+30 to +60 deg).
         """
         return sandbox.move_joints_to(
             rf_shoulder_deg=rf_shoulder_deg,
@@ -609,6 +509,7 @@ def build_direct_tools(sandbox: DirectBittleSandbox, skill_lib: SkillLibrary):
         - Walking backward: use negative shoulder_amp_deg (e.g. -20 deg) so the stance phase pushes backward.
         - Turning left: make right legs have larger amplitude (e.g. +25 deg) and left legs smaller or negative amplitude (e.g. -10 to +5 deg).
         - Turning right: make left legs have larger amplitude (e.g. +25 deg) and right legs smaller or negative amplitude.
+        - Pronking / hopping: set all 4 phases to 0 deg.
         """
         return sandbox.execute_custom_oscillator(
             cycles=cycles,
@@ -626,188 +527,11 @@ def build_direct_tools(sandbox: DirectBittleSandbox, skill_lib: SkillLibrary):
             knee_offset_deg=knee_offset_deg,
         )
 
-    def execute_saved_skill(skill_name: str, repeat: int = 1) -> dict:
-        """Execute a previously learned and saved skill from `learned_skills.json` by name.
-
-        Args:
-            skill_name: Name of the saved skill (e.g. 'trot_forward', 'sit', 'lie_down', 'wave_right_paw').
-            repeat: Number of cycles (for 'cpg' skills) or repetitions (for 'keyframes' skills). Ignored for 'pose' skills.
-        """
-        if skill_name not in skill_lib.skills:
-            return {
-                "error": f"Skill '{skill_name}' not found.",
-                "available_skills": list(skill_lib.skills.keys()),
-            }
-        entry = skill_lib.skills[skill_name]
-        kind = entry["kind"]
-        repeat = max(1, int(repeat))
-
-        if kind == "pose":
-            ja = entry["joint_angles"]
-            res = sandbox.move_joints_to(
-                rf_shoulder_deg=float(ja.get("rf_shoulder_deg", 0.0)),
-                rf_knee_deg=float(ja.get("rf_knee_deg", 0.0)),
-                lf_shoulder_deg=float(ja.get("lf_shoulder_deg", 0.0)),
-                lf_knee_deg=float(ja.get("lf_knee_deg", 0.0)),
-                rr_shoulder_deg=float(ja.get("rr_shoulder_deg", 0.0)),
-                rr_knee_deg=float(ja.get("rr_knee_deg", 0.0)),
-                lr_shoulder_deg=float(ja.get("lr_shoulder_deg", 0.0)),
-                lr_knee_deg=float(ja.get("lr_knee_deg", 0.0)),
-                transition_s=float(ja.get("transition_s", 0.6)),
-                hold_s=float(ja.get("hold_s", 0.4)),
-            )
-            res["executed_skill"] = skill_name
-            res["kind"] = "pose"
-            return res
-
-        elif kind == "keyframes":
-            kfs = entry["keyframes"] * repeat
-            res = sandbox.execute_keyframe_trajectory(kfs)
-            res["executed_skill"] = skill_name
-            res["kind"] = "keyframes"
-            res["repeat"] = repeat
-            return res
-
-        elif kind == "cpg":
-            p = entry["cpg_params"]
-            res = sandbox.execute_custom_oscillator(
-                cycles=repeat,
-                cycle_period_s=float(p.get("cycle_period_s", 0.5)),
-                rf_phase_deg=float(p.get("rf_phase_deg", 0.0)),
-                lf_phase_deg=float(p.get("lf_phase_deg", 180.0)),
-                rr_phase_deg=float(p.get("rr_phase_deg", 180.0)),
-                lr_phase_deg=float(p.get("lr_phase_deg", 0.0)),
-                rf_shoulder_amp_deg=float(p.get("rf_shoulder_amp_deg", 20.0)),
-                lf_shoulder_amp_deg=float(p.get("lf_shoulder_amp_deg", 20.0)),
-                rr_shoulder_amp_deg=float(p.get("rr_shoulder_amp_deg", 20.0)),
-                lr_shoulder_amp_deg=float(p.get("lr_shoulder_amp_deg", 20.0)),
-                knee_lift_amp_deg=float(p.get("knee_lift_amp_deg", 28.0)),
-                shoulder_offset_deg=float(p.get("shoulder_offset_deg", 0.0)),
-                knee_offset_deg=float(p.get("knee_offset_deg", 0.0)),
-            )
-            res["executed_skill"] = skill_name
-            res["kind"] = "cpg"
-            return res
-
-        return {"error": f"Unsupported skill kind: {kind}"}
-
-    def save_pose_skill(
-        skill_name: str,
-        description: str,
-        rf_shoulder_deg: float = 0.0,
-        rf_knee_deg: float = 0.0,
-        lf_shoulder_deg: float = 0.0,
-        lf_knee_deg: float = 0.0,
-        rr_shoulder_deg: float = 0.0,
-        rr_knee_deg: float = 0.0,
-        lr_shoulder_deg: float = 0.0,
-        lr_knee_deg: float = 0.0,
-        transition_s: float = 0.6,
-        hold_s: float = 0.4,
-    ) -> dict:
-        """Save a verified static posture (pose) as a reusable skill in `learned_skills.json`.
-
-        Args:
-            skill_name: Snake_case identifier (e.g. 'stand', 'sit', 'lie_down').
-            description: Clear description of what the posture does.
-        """
-        entry = skill_lib.register_pose(
-            name=skill_name,
-            description=description,
-            joint_angles={
-                "rf_shoulder_deg": rf_shoulder_deg,
-                "rf_knee_deg": rf_knee_deg,
-                "lf_shoulder_deg": lf_shoulder_deg,
-                "lf_knee_deg": lf_knee_deg,
-                "rr_shoulder_deg": rr_shoulder_deg,
-                "rr_knee_deg": rr_knee_deg,
-                "lr_shoulder_deg": lr_shoulder_deg,
-                "lr_knee_deg": lr_knee_deg,
-                "transition_s": transition_s,
-                "hold_s": hold_s,
-            },
-        )
-        return {"status": "saved", "skill": entry}
-
-    def save_keyframe_skill(
-        skill_name: str,
-        description: str,
-        keyframes: list[dict],
-    ) -> dict:
-        """Save a verified multi-step keyframe motion as a reusable skill in `learned_skills.json`.
-
-        Tip: For rhythmic gestures like waving a paw or push-ups, save 1 unit cycle (or the core motion) so `execute_saved_skill(skill_name, repeat=N)` can repeat it N times.
-
-        Args:
-            skill_name: Snake_case identifier (e.g. 'wave_right_paw', 'push_up').
-            description: Clear description of the motion and whether `repeat` controls repetitions.
-            keyframes: List of keyframe dicts with the 8 joint angles, transition_s, and hold_s.
-        """
-        entry = skill_lib.register_keyframes(
-            name=skill_name,
-            description=description,
-            keyframes=keyframes,
-        )
-        return {"status": "saved", "skill": entry}
-
-    def save_cpg_skill(
-        skill_name: str,
-        description: str,
-        cycle_period_s: float = 0.45,
-        rf_phase_deg: float = 0.0,
-        lf_phase_deg: float = 180.0,
-        rr_phase_deg: float = 180.0,
-        lr_phase_deg: float = 0.0,
-        rf_shoulder_amp_deg: float = 22.0,
-        lf_shoulder_amp_deg: float = 22.0,
-        rr_shoulder_amp_deg: float = 22.0,
-        lr_shoulder_amp_deg: float = 22.0,
-        knee_lift_amp_deg: float = 30.0,
-        shoulder_offset_deg: float = 0.0,
-        knee_offset_deg: float = 0.0,
-    ) -> dict:
-        """Save a verified CPG oscillator gait as a reusable skill in `learned_skills.json`.
-
-        When executed via `execute_saved_skill(skill_name, repeat=N)`, `repeat` will specify the number of gait cycles (steps).
-
-        Args:
-            skill_name: Snake_case identifier (e.g. 'trot_forward', 'walk_backward', 'turn_left').
-            description: Clear description of the gait (including approx distance per cycle if known).
-        """
-        entry = skill_lib.register_cpg(
-            name=skill_name,
-            description=description,
-            cpg_params={
-                "cycle_period_s": cycle_period_s,
-                "rf_phase_deg": rf_phase_deg,
-                "lf_phase_deg": lf_phase_deg,
-                "rr_phase_deg": rr_phase_deg,
-                "lr_phase_deg": lr_phase_deg,
-                "rf_shoulder_amp_deg": rf_shoulder_amp_deg,
-                "lf_shoulder_amp_deg": lf_shoulder_amp_deg,
-                "rr_shoulder_amp_deg": rr_shoulder_amp_deg,
-                "lr_shoulder_amp_deg": lr_shoulder_amp_deg,
-                "knee_lift_amp_deg": knee_lift_amp_deg,
-                "shoulder_offset_deg": shoulder_offset_deg,
-                "knee_offset_deg": knee_offset_deg,
-            },
-        )
-        return {"status": "saved", "skill": entry}
-
-    def list_saved_skills() -> dict:
-        """Return all currently saved skills in `learned_skills.json`."""
-        return {"skills": skill_lib.skills}
-
     def get_robot_state() -> dict:
         """Return the robot's current 3D position, orientation (yaw, pitch, roll), joint angles, and foot heights."""
         return sandbox.get_state()
 
     tools = [
-        execute_saved_skill,
-        save_pose_skill,
-        save_keyframe_skill,
-        save_cpg_skill,
-        list_saved_skills,
         set_joint_angles,
         play_custom_keyframes,
         run_custom_cpg_oscillator,
@@ -817,40 +541,32 @@ def build_direct_tools(sandbox: DirectBittleSandbox, skill_lib: SkillLibrary):
     return tools, tool_map
 
 
-SYSTEM_INSTRUCTION = """You are an embodied robotics controller driving an 8-DOF Petoi Bittle X quadruped robot in MuJoCo, equipped with a persistent **Self-Learning Skill Library** (`learned_skills.json`).
+SYSTEM_INSTRUCTION = """You are an embodied robotics controller driving an 8-DOF Petoi Bittle X quadruped robot in MuJoCo.
+IMPORTANT: NO preset gaits or preset poses are loaded. You have direct control over the 8 joint servo angles via:
+1. `set_joint_angles`: Set all 8 joint angles (shoulders and knees for RF, LF, RR, LR in degrees relative to neutral stand).
+2. `play_custom_keyframes`: Execute a custom multi-frame joint trajectory that you design (for gestures like waving a paw, push-ups, stretching, bowing, sitting, lying down, or custom step sequences).
+3. `run_custom_cpg_oscillator`: Synthesize rhythmic locomotion (walking, trotting, turning, hopping) by choosing oscillator phases, amplitudes, and frequencies.
 
-### Workflow Rules:
-1. **REUSE EXISTING SKILLS FIRST (Fast & Low Cost)**:
-   - Check the "Available Learned Skills" provided in the prompt.
-   - If a saved skill matches part or all of the user's instruction, call `execute_saved_skill(skill_name=..., repeat=...)` directly! You can call multiple `execute_saved_skill` calls in sequence in a single turn when all required skills already exist.
-2. **SYNTHESIZE NEW MOTIONS FROM FIRST PRINCIPLES**:
-   - If a requested motion or posture is NOT yet in the skill library, synthesize it using the low-level tools:
-     * `set_joint_angles` for static postures (stand, sit, lie_down, etc.)
-     * `play_custom_keyframes` for multi-frame gestures (waving a paw, push-ups, bow, dance, etc.)
-     * `run_custom_cpg_oscillator` for rhythmic locomotion (trot forward, backward, turn left/right, etc.)
-3. **VERIFY & SAVE NEW SKILLS TO THE LIBRARY**:
-   - After executing a newly synthesized motion, inspect the physical state (`torso_pos_m`, `orientation_deg`, `fallen`) and camera image.
-   - Once verified that the motion succeeded without falling, **save each distinct reusable skill** using `save_pose_skill`, `save_keyframe_skill`, or `save_cpg_skill` so future runs can execute it in 1 shot without trial-and-error!
-
-### Joint Angle Coordinate System (for all 4 legs: RF, LF, RR, LR):
+Joint Angle Coordinate System (for all 4 legs: RF, LF, RR, LR):
 - `shoulder_deg`: 0° = neutral stand; `+deg` swings the thigh FORWARD toward the head; `-deg` swings the thigh BACKWARD toward the tail.
 - `knee_deg`: 0° = neutral stand; `+deg` bends/lifts the lower leg (shank) FORWARD & UP; `-deg` swings/folds the lower leg BACKWARD.
+
+Always inspect the returned physical state (`torso_pos_m`, `orientation_deg`, `fallen`) and camera image after each tool call. If a posture or motion did not achieve the desired effect (e.g., torso height `z_above_floor` didn't lower enough when lying down, or yaw drifted), refine the joint angles on the next turn.
 """
 
 
 def run_direct_gemini_agent(
     prompt: str,
     sandbox: DirectBittleSandbox,
-    skill_lib: SkillLibrary,
     model_name: str = "gemini-4-argon",
     include_vision: bool = True,
     max_turns: int = 10,
 ) -> str:
-    """Run Gemini 4 Argon with direct joint control + persistent skill library."""
+    """Run Gemini 4 Argon in a closed perception-action loop using only direct joint control."""
     load_dotenv(ROOT_DIR / ".env")
     client = genai.Client()
 
-    tools, tool_map = build_direct_tools(sandbox, skill_lib)
+    tools, tool_map = build_direct_tools(sandbox)
 
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION,
@@ -859,15 +575,11 @@ def run_direct_gemini_agent(
         temperature=0.1,
     )
 
-    skills_summary = skill_lib.summary_for_prompt()
-    initial_text = (
-        f"=== Available Learned Skills in `{skill_lib.path.name}` ===\n"
-        f"{skills_summary}\n\n"
-        f"Initial robot state: {sandbox.get_state()}\n"
-        f"User instruction: {prompt}"
-    )
-
-    initial_parts = [types.Part.from_text(text=initial_text)]
+    initial_parts = [
+        types.Part.from_text(
+            text=f"Initial robot state: {sandbox.get_state()}\nUser instruction: {prompt}"
+        )
+    ]
     if include_vision:
         initial_parts.append(
             types.Part.from_bytes(data=sandbox.get_snapshot_png(), mime_type="image/png")
@@ -877,14 +589,11 @@ def run_direct_gemini_agent(
         types.Content(role="user", parts=initial_parts)
     ]
 
-    print(f"\n[Zero-Preset + Skill-Library Agent] Model: {model_name}")
-    print(f"[Skills Loaded] {len(skill_lib.skills)} skill(s): {list(skill_lib.skills.keys())}")
+    print(f"\n[Zero-Preset Gemini Agent] Model: {model_name}")
     print(f"[User Prompt]   {prompt}")
     print(f"[Initial State] {sandbox.get_state()}\n")
 
-    api_calls = 0
     for turn in range(1, max_turns + 1):
-        api_calls += 1
         response = client.models.generate_content(
             model=model_name,
             contents=contents,
@@ -900,14 +609,13 @@ def run_direct_gemini_agent(
 
         function_calls = response.function_calls
         if not function_calls:
-            print(f"\n[Completed in {api_calls} API call(s) | Saved skills: {list(skill_lib.skills.keys())}]")
             return response.text or ""
 
         tool_response_parts: list[types.Part] = []
         for fc in function_calls:
             fn_name = fc.name
             fn_args = dict(fc.args) if fc.args else {}
-            print(f"  -> Executing tool: {fn_name}({fn_args})")
+            print(f"  -> Executing low-level tool: {fn_name}({fn_args})")
 
             if fn_name not in tool_map:
                 res = {"error": f"Unknown tool: {fn_name}"}
@@ -933,24 +641,13 @@ def run_direct_gemini_agent(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Zero-Preset Direct Joint Control + Autonomous Skill Learning via Gemini 4 Argon."
+        description="Zero-Preset Direct Joint Control of Petoi Bittle X in MuJoCo via Gemini 4 Argon."
     )
     parser.add_argument(
         "--prompt",
         type=str,
-        default="前に3歩進んでから、お座りして、右前足を上げて3回バイバイ（手を振る）して、最後に伏せて",
+        default="前に3歩進んでから、伏せて、最後に右前足を上げて3回バイバイ（手を振る）して",
         help="Natural language command for Bittle.",
-    )
-    parser.add_argument(
-        "--skills-file",
-        type=str,
-        default=str(DEFAULT_SKILLS_PATH),
-        help="Path to the persistent learned skills JSON file.",
-    )
-    parser.add_argument(
-        "--reset-skills",
-        action="store_true",
-        help="Clear the learned skills JSON file before running.",
     )
     parser.add_argument(
         "--model",
@@ -961,7 +658,7 @@ def main():
     parser.add_argument(
         "--video",
         type=str,
-        default="bittle_skills_demo.mp4",
+        default=str(ROOT_DIR / "videos" / "bittle_direct_demo.mp4"),
         help="Output MP4/GIF path to record the simulation.",
     )
     parser.add_argument(
@@ -976,13 +673,6 @@ def main():
     )
     args = parser.parse_args()
 
-    skills_path = Path(args.skills_file)
-    if args.reset_skills and skills_path.exists():
-        skills_path.unlink()
-        print(f"[Reset] Removed existing skills file: {skills_path}")
-
-    skill_lib = SkillLibrary(skills_path)
-
     if args.viewer:
         import mujoco.viewer
 
@@ -996,7 +686,6 @@ def main():
             final_text = run_direct_gemini_agent(
                 prompt=args.prompt,
                 sandbox=sandbox,
-                skill_lib=skill_lib,
                 model_name=args.model,
                 include_vision=not args.no_vision,
             )
@@ -1007,7 +696,6 @@ def main():
         final_text = run_direct_gemini_agent(
             prompt=args.prompt,
             sandbox=sandbox,
-            skill_lib=skill_lib,
             model_name=args.model,
             include_vision=not args.no_vision,
         )

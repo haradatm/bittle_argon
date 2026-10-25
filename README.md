@@ -19,49 +19,67 @@ Gemini がツールを呼び出してシミュレーションを進め、レン�
 ## ファイル構成
 
 - [bittle_gemini_walkthrough.ipynb](./bittle_gemini_walkthrough.ipynb): 共通セットアップ、各方式の実装解説、実行例と結果の表示。
-- [bittle_gemini_control.py](./bittle_gemini_control.py): プリセット動作を利用する制御スクリプト。
-- [bittle_gemini_direct.py](./bittle_gemini_direct.py): プリセットを利用しない直接関節制御スクリプト。
-- [bittle_gemini_skills.py](./bittle_gemini_skills.py): スキルの保存・読み込み・再利用を行うスクリプト。
+- [src/bittle_gemini_control.py](./src/bittle_gemini_control.py): プリセット動作を利用する制御スクリプト。
+- [src/bittle_gemini_direct.py](./src/bittle_gemini_direct.py): プリセットを利用しない直接関節制御スクリプト。
+- [src/bittle_gemini_skills.py](./src/bittle_gemini_skills.py): スキルの保存・読み込み・再利用を行うスクリプト。
+- [videos/](./videos/): 生成したシミュレーション動画の保存先。
 
-実行時には、スキル保存用の `learned_skills.json` や動画ファイルが生成されます。ノートブックのスキル学習例では、別の `notebook_learned_skills.json` を使用します。
+スキル保存用の `learned_skills.json` は動画とは別に管理します。ノートブックのスキル学習例では、別の `notebook_learned_skills.json` を使用します。
+
+### 実行結果のサンプル
+
+| プリセット方式での二足立ちの試行 (失敗) | 保存済みスキルによる二足立ちと前足を振る動作の試行 (成功) | 保存済みスキルを利用した二足歩行の試行 (成功)|
+| --- | --- | --- |
+| ![プリセット方式での二足立ちの試行](./assets/notebook_part1_preset_biped.gif) | ![保存済みスキルによる二足立ちと前足を振る動作の試行](./assets/notebook_part3_skill_reuse_biped.gif) | ![保存済みスキルを利用した二足歩行の試行](./assets/notebook_part3_skill_reuse_biped_walk.gif) |
 
 ## 実行準備
 
-Python 環境、ノートブック実行環境、MuJoCo のレンダリングが利用できる環境、および Gemini API へのアクセスが必要です。
+Git、[uv](https://docs.astral.sh/uv/getting-started/installation/)、MuJoCo のレンダリングが利用できる環境、および Gemini API へのアクセスが必要です。ノートブックを実行する場合は、VS Code の Python / Jupyter 拡張機能も準備してください。
 
-1. リポジトリ直下にシミュレーションモデルを配置します。
+1. uv を未導入の場合は、上記の公式インストール手順に従って導入します。以降のコマンドは、このリポジトリのルートで実行してください。
+
+2. uv で Python 環境と依存ライブラリを準備します。
+
+   ```bash
+   uv python install 3.12
+   uv sync --locked --no-install-project
+   ```
+
+   [.python-version](./.python-version) で指定した Python 3.12 を使用し、[pyproject.toml](./pyproject.toml) と [uv.lock](./uv.lock) に基づいて `.venv` を構築します。各制御スクリプトを直接実行する構成のため、`--no-install-project` でプロジェクト自身のパッケージ化を省略します。
+
+3. [MarcHesse/bittle-mujoco](https://github.com/MarcHesse/bittle-mujoco) をリポジトリ直下にクローンします。
 
    ```bash
    git clone https://github.com/MarcHesse/bittle-mujoco.git bittle-mujoco
    ```
 
-2. 使用する Python 環境に依存ライブラリをインストールします。
+   `bittle-mujoco/bittle.xml` と `bittle-mujoco/gaits.py` を使用します。すでにクローン済みの場合は、この手順を省略してください。
 
-   ```bash
-   python -m pip install mujoco numpy google-genai python-dotenv pillow imageio imageio-ffmpeg ipython ipykernel
-   ```
-
-3. リポジトリ直下の `.env` に API キーを設定します。API キーは Git にコミットしないでください。
+4. リポジトリ直下の `.env` に API キーを設定します。API キーは Git にコミットしないでください。
 
    ```dotenv
    GEMINI_API_KEY=your_api_key
    ```
 
-4. VS Code などでノートブックを開き、準備した Python 環境をカーネルに選択して、共通セットアップから順にセルを実行します。作業ディレクトリはリポジトリ直下にしてください。
+5. VS Code でリポジトリのルートを開き、[ノートブック](./bittle_gemini_walkthrough.ipynb) のカーネルに `.venv/bin/python` (Windows は `.venv/Scripts/python.exe`) を選択します。作業ディレクトリをリポジトリ直下にして、共通セットアップから順にセルを実行してください。
 
 モデル ID はノートブックでは `gemini-4-argon` を使用しています。利用可能なモデル ID とアクセス権を確認し、必要に応じてノートブックの `model_name` またはスクリプトの `--model` で変更してください。
 
 ## コマンドラインでの実行例
 
+リポジトリ直下から実行します。動画は既定で [videos/](./videos/) に保存され、保存先ディレクトリは自動作成されます。`--video` で別の保存先を指定することもできます。
+
+環境構築後は `uv run --no-sync` で準備済みの `.venv` を使用できます。依存関係を変更した場合は、先に `uv sync --locked --no-install-project` を再実行してください。
+
 ```bash
 # プリセット動作を組み合わせる
-python bittle_gemini_control.py --model gemini-4-argon --prompt "前に3歩進んでから伏せて" --video preset_demo.mp4
+uv run --no-sync python src/bittle_gemini_control.py --model gemini-4-argon --prompt "前に3歩進んでから伏せて" --video videos/preset_demo.mp4
 
 # 関節角度から動作を合成する
-python bittle_gemini_direct.py --model gemini-4-argon --prompt "お座りして右前足を3回振って" --video direct_demo.mp4
+uv run --no-sync python src/bittle_gemini_direct.py --model gemini-4-argon --prompt "お座りして右前足を3回振って" --video videos/direct_demo.mp4
 
 # スキルを保存し、以後の実行で再利用する
-python bittle_gemini_skills.py --model gemini-4-argon --prompt "お座りして右前足を3回振って" --skills-file learned_skills.json --video skills_demo.mp4
+uv run --no-sync python src/bittle_gemini_skills.py --model gemini-4-argon --prompt "お座りして右前足を3回振って" --skills-file learned_skills.json --video videos/skills_demo.mp4
 ```
 
 ## 注意事項

@@ -1,2 +1,8 @@
 .DS_Store
 .env
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+bittle-mujoco
+notebook_learned_skills.json

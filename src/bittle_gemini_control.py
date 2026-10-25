@@ -26,7 +26,7 @@ from google.genai import types
 from PIL import Image
 
 # Add bittle-mujoco directory to sys.path so we can import gaits
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 BITTLE_DIR = ROOT_DIR / "bittle-mujoco"
 if str(BITTLE_DIR) not in sys.path:
     sys.path.insert(0, str(BITTLE_DIR))
@@ -260,6 +260,7 @@ class BittleMuJoCoController:
         if not self.frames:
             return
         path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix.lower() == ".gif":
             imageio.mimsave(str(path), self.frames, fps=self.fps)
             return
@@ -499,7 +500,7 @@ def main():
     parser.add_argument(
         "--video",
         type=str,
-        default="bittle_gemini_demo.mp4",
+        default=str(ROOT_DIR / "videos" / "bittle_gemini_demo.mp4"),
         help="Output MP4/GIF path to record the simulation.",
     )
     parser.add_argument(
